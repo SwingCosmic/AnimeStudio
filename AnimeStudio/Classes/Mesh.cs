@@ -328,7 +328,7 @@ namespace AnimeStudio
             }
             hasNormals = reader.ReadBoolean();
             hasTangents = reader.ReadBoolean();
-            if (reader.Game.Type.IsHNACB1())
+            if (reader.Game.Type.IsHNACB1() || reader.Game.Type.IsHNALive())
             {
                 // god fears nothing but this simple function
                 reader.AlignStream();
@@ -399,7 +399,7 @@ namespace AnimeStudio
 
                 fullWeights = reader.ReadSingleArray();
 
-                if (reader.Game.Type.IsHNACB1())
+                if (reader.Game.Type.IsHNACB1() || reader.Game.Type.IsHNALive())
                 {
                     additionalVertices = new List<BlendShapeAdditionalVertex>();
                     var length = reader.ReadInt32();
@@ -846,7 +846,8 @@ namespace AnimeStudio
             if (version[0] > 2018 || (version[0] == 2018 && version[1] >= 3)) //2018.3 and up
             {
                 reader.AlignStream();
-                m_StreamData = new StreamingInfo(reader);
+                //Nexus Anima stores no path, the vertex data lives in the data node linked to the serialized file
+                m_StreamData = reader.Game.Type.IsHNALive() ? new StreamingInfo(reader, assetsFile) : new StreamingInfo(reader);
             }
 
             if (reader.Game.Type.IsArknightsEndfield())
@@ -1261,6 +1262,12 @@ namespace AnimeStudio
                 }
                 var indexCount = m_SubMesh.indexCount;
                 var topology = m_SubMesh.topology;
+                //a mesh that is only used for collision keeps its submeshes but ships without their indices
+                if (firstIndex + indexCount > m_IndexBuffer.Length)
+                {
+                    Logger.Warning($"Mesh {m_Name} has no index data for a submesh ({indexCount} indices), it is skipped");
+                    continue;
+                }
                 if (topology == GfxPrimitiveType.Triangles)
                 {
                     for (int i = 0; i < indexCount; i += 3)

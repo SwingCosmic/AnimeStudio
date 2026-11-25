@@ -24,6 +24,15 @@ namespace AnimeStudio
             size = reader.ReadUInt32();
             path = reader.ReadAlignedString();
         }
+
+        //Nexus Anima: no path is stored, the data lives in the data node that is linked to the serialized file
+        //(BundleFile registers it under the name this resolves to); an empty range keeps the path null
+        public StreamingInfo(ObjectReader reader, SerializedFile assetsFile)
+        {
+            offset = reader.ReadInt64();
+            size = reader.ReadUInt32();
+            path = size > 0 ? assetsFile.GetLinkedResourcePath() : null;
+        }
     }
 
     public class GLTextureSettings
@@ -70,6 +79,8 @@ namespace AnimeStudio
     {
         public int m_Width;
         public int m_Height;
+        public int m_CompleteImageSize;
+        public int m_MipsStripped;
         public TextureFormat m_TextureFormat;
         public bool m_MipMap;
         public int m_MipCount;
@@ -93,10 +104,10 @@ namespace AnimeStudio
         {
             m_Width = reader.ReadInt32();
             m_Height = reader.ReadInt32();
-            var m_CompleteImageSize = reader.ReadInt32();
+            m_CompleteImageSize = reader.ReadInt32();
             if (version[0] >= 2020) //2020.1 and up
             {
-                var m_MipsStripped = reader.ReadInt32();
+                m_MipsStripped = reader.ReadInt32();
             }
             m_TextureFormat = (TextureFormat)reader.ReadInt32();
   
@@ -167,6 +178,11 @@ namespace AnimeStudio
             {
                 reader.AlignStream();
             }
+            if (reader.Game.Type.IsHNALive())
+            {
+                //Nexus Anima: one int32 between m_StreamingMipmapsPriority and m_ImageCount that Unity does not have
+                reader.Position += 4;
+            }
             var m_ImageCount = reader.ReadInt32();
             var m_TextureDimension = reader.ReadInt32();
             m_TextureSettings = new GLTextureSettings(reader);
@@ -194,6 +210,7 @@ namespace AnimeStudio
                 reader.AlignStream();
             }
             var image_data_size = reader.ReadInt32();
+            var image_data_start = reader.Position;
             if (image_data_size == 0 && ((version[0] == 5 && version[1] >= 3) || version[0] > 5))//5.3.0 and up
             {
                 if (reader.Game.Type.IsGI() && HasExternalMipRelativeOffset(reader.serializedType))
@@ -204,7 +221,17 @@ namespace AnimeStudio
                 {
                     var m_ExternalMipRelativeIndex = reader.ReadUInt32();
                 }
-                m_StreamData = new StreamingInfo(reader);
+                m_StreamData = reader.Game.Type.IsHNALive() ? new StreamingInfo(reader, assetsFile) : new StreamingInfo(reader);
+            }
+            else if (reader.Game.Type.IsHNALive() && image_data_size > 0 && image_data_size <= reader.BytesLeft())
+            {
+                //Nexus Anima writes the stream info (offset, size, always empty here) after inline pixels too
+                reader.Position += image_data_size;
+                reader.AlignStream();
+                if (reader.BytesLeft() >= 12)
+                {
+                    reader.Position += 12;
+                }
             }
 
             ResourceReader resourceReader;
@@ -214,7 +241,7 @@ namespace AnimeStudio
             }
             else
             {
-                resourceReader = new ResourceReader(reader, reader.BaseStream.Position, image_data_size);
+                resourceReader = new ResourceReader(reader, image_data_start, image_data_size);
             }
             image_data = resourceReader;
         }

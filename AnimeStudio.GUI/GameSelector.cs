@@ -19,7 +19,7 @@ namespace AnimeStudio.GUI
             new[] { GameType.BH3, GameType.BH3Pre, GameType.BH3PrePre },
             new[] { GameType.SR, GameType.SR_CB2 },
             new[] { GameType.ZZZ, GameType.ZZZ_CB1, GameType.ZZZ_CB2 },
-            new[] { GameType.HNA_CB1 },
+            new[] { GameType.HNA_Live, GameType.HNA_CB1 },
             new[] { GameType.HYG_CB1 },
             new[] { GameType.TOT },
         };

@@ -90,6 +90,8 @@ namespace AnimeStudio
 
             Games.Add(index++, new UnityCNGame(GameType.UnityCNCustomKey, new("UnityCN Custom Key", ""), GameCategory.Unity));
             Games.Add(index++, new Game(GameType.AFKJourney, "AFK Journey"));
+            // keep appended at the end: the GUI remembers the selected game by its index in this list
+            Games.Add(index++, new Game(GameType.HNA_Live, "Live", GameCategory.Hoyo));
         }
         public static Game GetGameByType(GameType gameType) => Games.FirstOrDefault(x => x.Value.Type == gameType).Value;
         public static Game GetGame(GameType gameType) => GetGameByType(gameType);
@@ -264,6 +266,7 @@ namespace AnimeStudio
         RewindingCadence,
         AzurPromiliaCBT2,
         AFKJourney,
+        HNA_Live,
     }
 
 
@@ -294,6 +297,7 @@ namespace AnimeStudio
         public static bool IsSRCB2(this GameType type) => type == GameType.SR_CB2;
         public static bool IsSR(this GameType type) => type == GameType.SR;
         public static bool IsHNACB1(this GameType type) => type == GameType.HNA_CB1;
+        public static bool IsHNALive(this GameType type) => type == GameType.HNA_Live;
         public static bool IsHYGCB1(this GameType type) => type == GameType.HYG_CB1;
         public static bool IsTOT(this GameType type) => type == GameType.TOT;
         public static bool IsNaraka(this GameType type) => type == GameType.Naraka;

@@ -19,6 +19,7 @@ namespace AnimeStudio
         OldWebPluginCompatibility = 0x100,
         BlockInfoNeedPaddingAtStart = 0x200,
         UnityCNEncryption = 0x400,
+        BlocksInfoObfuscated = 0x800, //Nexus Anima format version 10: blocks info has to go through WmvUtils.Decrypt before it is decompressed
         UnityCNEncryption2 = 0x1000
     }
 
@@ -97,6 +98,8 @@ namespace AnimeStudio
             public long size;
             public uint flags;
             public string path;
+            //Nexus Anima: index of the data node this serialized file node is linked to, -1 if it has none
+            public int dataIndex = -1;
 
             public override string ToString()
             {
@@ -108,6 +111,8 @@ namespace AnimeStudio
                 return sb.ToString();
             }
         }
+
+        private const uint kArchiveNodeFlagsSerializedFile = 4;
 
         private Game Game;
         private UnityCN UnityCN;
@@ -323,6 +328,10 @@ namespace AnimeStudio
         public void ReadFiles(Stream blocksStream, string path)
         {
             Logger.Verbose($"Writing files from blocks stream...");
+            if (Game.Type.IsHNALive() && m_Header.version >= 10)
+            {
+                NameLinkedNodes(path);
+            }
 
             fileList = new List<StreamFile>();
             // Prefer zero-copy slices over the decompressed block buffer when possible.
@@ -334,6 +343,11 @@ namespace AnimeStudio
             for (int i = 0; i < m_DirectoryInfo.Count; i++)
             {
                 var node = m_DirectoryInfo[i];
+                if (node.path == null)
+                {
+                    //no name means the node is not exposed as a file (unlinked data node)
+                    continue;
+                }
                 var file = new StreamFile();
                 fileList.Add(file);
                 file.path = node.path;
@@ -486,6 +500,15 @@ namespace AnimeStudio
             }
             MemoryStream blocksInfoUncompresseddStream;
             var blocksInfoBytesSpan = blocksInfoBytes.AsSpan(0, (int)m_Header.compressedBlocksInfoSize);
+            if (Game.Type.IsHNALive() && (m_Header.flags & ArchiveFlags.BlocksInfoObfuscated) != 0)
+            {
+                if (blocksInfoBytesSpan.Length < 16)
+                {
+                    throw new InvalidDataException($"Blocks info size {blocksInfoBytesSpan.Length} is too small to be deobfuscated");
+                }
+                Logger.Verbose($"Blocks info is obfuscated, transforming...");
+                WmvUtils.Decrypt(blocksInfoBytesSpan);
+            }
             var uncompressedSize = m_Header.uncompressedBlocksInfoSize;
             var compressionType = (CompressionType)(m_Header.flags & ArchiveFlags.CompressionTypeMask);
             Logger.Verbose($"BlockInfo compression type: {compressionType}");
@@ -568,6 +591,8 @@ namespace AnimeStudio
                 var nodesCount = blocksInfoReader.ReadInt32();
                 m_DirectoryInfo = new List<Node>();
                 Logger.Verbose($"Directory count: {nodesCount}");
+                //Nexus Anima (format version 10): nodes carry no names and are followed by a link table
+                bool linkedDirectory = Game.Type.IsHNALive() && m_Header.version >= 10;
                 for (int i = 0; i < nodesCount; i++)
                 {
                     m_DirectoryInfo.Add(new Node
@@ -575,10 +600,30 @@ namespace AnimeStudio
                         offset = blocksInfoReader.ReadInt64(),
                         size = blocksInfoReader.ReadInt64(),
                         flags = blocksInfoReader.ReadUInt32(),
-                        path = blocksInfoReader.ReadStringToNull(),
                     });
 
+                    if (!linkedDirectory)
+                    {
+                        m_DirectoryInfo[i].path = blocksInfoReader.ReadStringToNull();
+                    }
+
                     Logger.Verbose($"Directory {i} Info: {m_DirectoryInfo[i]}");
+                }
+
+                if (linkedDirectory)
+                {
+                    var linksCount = blocksInfoReader.ReadInt32();
+                    Logger.Verbose($"Link count: {linksCount}");
+                    for (int i = 0; i < linksCount; i++)
+                    {
+                        blocksInfoReader.ReadInt32();
+                        blocksInfoReader.ReadInt32();
+                        var target = blocksInfoReader.ReadInt32();
+                        if (i < nodesCount && target >= 0 && target < nodesCount && target != i)
+                        {
+                            m_DirectoryInfo[i].dataIndex = target;
+                        }
+                    }
                 }
             }
             if (HasBlockInfoNeedPaddingAtStart && (m_Header.flags & ArchiveFlags.BlockInfoNeedPaddingAtStart) != 0)
@@ -587,9 +632,46 @@ namespace AnimeStudio
             }
         }
 
+        //Nexus Anima: serialized file nodes carry no name, and the data node they are linked to plays the role of their .resS
+        private void NameLinkedNodes(string path)
+        {
+            var bundleName = Path.GetFileNameWithoutExtension(path);
+            for (int i = 0; i < m_DirectoryInfo.Count; i++)
+            {
+                var node = m_DirectoryInfo[i];
+                if (node.flags != kArchiveNodeFlagsSerializedFile)
+                {
+                    if (node.flags != 0)
+                    {
+                        Logger.Warning($"Node {i} with unknown flags {node.flags} in {Path.GetFileName(path)} is skipped");
+                    }
+                    continue;
+                }
+
+                node.path = $"{bundleName}_{i}";
+                if (node.dataIndex >= 0 && node.dataIndex < m_DirectoryInfo.Count)
+                {
+                    var data = m_DirectoryInfo[node.dataIndex];
+                    if (data.flags == 0)
+                    {
+                        data.path = node.path + ".resS";
+                    }
+                    else
+                    {
+                        Logger.Warning($"Node {i} in {Path.GetFileName(path)} links to node {node.dataIndex} with flags {data.flags}, the link is ignored");
+                        node.dataIndex = -1;
+                    }
+                }
+            }
+        }
+
         private void ReadBlocks(FileReader reader, Stream blocksStream)
         {
             Logger.Verbose($"Writing block to blocks stream...");
+            if (Game.Type.IsHNALive() && (m_Header.flags & ArchiveFlags.UnityCNEncryption) != 0)
+            {
+                throw new IOException("Nexus Anima bundles with obfuscated data blocks (flag 0x400) are not supported yet");
+            }
 
             byte[] firstBlockBytes = new byte[0];
             Span<byte> firstBlockSpan = Span<byte>.Empty;
@@ -622,6 +704,7 @@ namespace AnimeStudio
                         }
                     case CompressionType.OodleHSR:
                     case CompressionType.OodleMr0k:
+                    case CompressionType.Oodle when Game.Type.IsHNALive(): //Nexus Anima
                         {
                             // Star Rail v2.7 fix, thanks to Yarik
                             var compressedSize = (int)blockInfo.compressedSize;

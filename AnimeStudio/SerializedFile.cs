@@ -425,6 +425,10 @@ namespace AnimeStudio
 
         public bool IsVersionStripped => unityVersion == strippedVersion;
 
+        //Nexus Anima: the name BundleFile registered the data node linked to this serialized file under,
+        //it holds the streamed resource data that other games keep in a separate .resS file
+        public string GetLinkedResourcePath() => fileName + ".resS";
+
         private const string strippedVersion = "0.0.0";
     }
 }
